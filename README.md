@@ -39,8 +39,12 @@ cutadapt -a AGATCGGAAGAGC -A AGATCGGAAGAGC -q 5 -m 25 -o Testes_trimmed_R1.fastq
 ```
 After trimming is complete, use `fastqc` on the resulting files to check that adapters have been trimmed and that the newly generated `fastq` files look good. 
 
-Step 3: *de novo* Assembly with Trinity
+Step 3: Assembly
 ======
+After you've conducted the basic QC steps described above, you're ready to do assemble your transcriptome. We are going to assemble transcriptomes using three methods: (1) *de novo* assembly, (2) genome guided assembly, and (3) transcriptome guided assembly.
+
+Step 3a: *de novo* Assembly with Trinity
+------
 After you've conducted the basic QC steps described above, you're ready to do your first *de novo* assembly. We use the `Trinity` package for *de novo* transcriptome assembly. Because *de novo* assembly with `Trinity` requires a large amount of computer memory (~1GB RAM/1 million sequence reads) and generates a large number of files (~900,000) you should be sure that your quotas are able to accommodate these requirements prior to initiating assembly. In the script below, we will run *de novo* assembly using a high memory node via the `bigm` queue; moreover, hundreds of thousands of files that are temporarily required during the assembly process are stored on the node running the analyses (`file=200gb`) rather than in the scratch space, which has stricter constraints on file size and number. Importantly, all of the temporary files generated during the course of the `Trinity` analyses are deleted at the end of the script to avoid gumming up the cluster's hard drives. The main output from `Trinity` will be a large (e.g., 400+ MB for a dataset with 40 million reads) `fasta` file called `trinity_out_dir.Trinity.fasta` that will include each of your assembled transcripts. This operation will take a day or more running on multiple threads.
 
 ```
@@ -61,32 +65,37 @@ rm -rf $work_dir
 
 ```
 
-Step 3: Assembly
-======
-After you've conducted the basic QC steps described above, you're ready to do assemble your transcriptome.
-
-Step 3a: *De novo* with Trinity
+Step 3b: Reference Genome-based Assembly via TopHat and Cufflinks
 -----
-We use the `Trinity` package for *de novo* transcriptome assembly. Because *de novo* assembly with `Trinity` requires a large amount of computer memory (~1GB RAM/1 million sequence reads) and generates a large number of files (~900,000) you should be sure that your quotas are able to accommodate these requirements prior to initiating assembly. In the script below, we will run *de novo* assembly using a high memory node via the `bigm` queue; moreover, hundreds of thousands of files that are temporarily required during the assembly process are stored on the node running the analyses (`file=200gb`) rather than in the scratch space, which has stricter constraints on file size and number. Importantly, all of the temporary files generated during the course of the `Trinity` analyses are deleted at the end of the script to avoid gumming up the cluster's hard drives. The main output from `Trinity` will be a large (e.g., 400+ MB for a dataset with 40 million reads) `fasta` file called `trinity_out_dir.Trinity.fasta` that will include each of your assembled transcripts. This operation will take a day or more running on multiple threads.
+An alternative to *de novo* assembly is to assemble transcriptomes using a previously assembled genome as a reference. This procedure can be implemented via the Tuxedo software suite, wherein the program Tophat is first used to map the individual Illumina sequence reads to the genome and to identify putative splice sites. Once this mapping is complete, Cufflinks may be used to assemble transcripts against the genome.
+
+Tophat uses the mapping function Bowtie, but differs in being able to handle the types of larger gaps that are expected in transcriptomes where introns and alternative splicing may result in gaps of hundreds or even thousands of basepairs. The output from Tophat will be in the form of a large BAM file that includes the mapping information. Tophat I'm not sure why, but the Tophat function below was incredibly time and storage intensive, ultimately requiring more than two weeks to complete and requiring more than 400 GB of temporary storage.
 
 ```
-#PBS -N trinity_heart
-#PBS -q bigm -l nodes=1:ppn=24:avx,mem=512000m,walltime=72:00:00,file=200gb
+#PBS -N tophat_dovetail_short
+#PBS -q bigm -l nodes=1:ppn=24:avx,mem=500000m,walltime=296:00:00
 #PBS -M glor@ku.edu
 #PBS -m abe
-#PBS -d /scratch/glor_lab/rich/distichus_genome_RNAseq/Heart
+#PBS -d /scratch/glor_lab/rich/distichus_genome/Cufflinks
 #PBS -j oe
-#PBS -o trinity_heart_error
+#PBS -o tophat_dovetail_short_error
 
-work_dir=$(mktemp -d) #Generates name for working directory where temporary files will be stored.
-mkdir $work_dir #Generates working directory for temporary file storage.
-cp /scratch/glor_lab/rich/distichus_genome_RNAseq/Heart/Heart_trimmed* $work_dir #Copies sequence files for assembly to new working directory on node doing analyses.
-Trinity -seqType fq --max_memory 512G --left $work_dir/Heart_trimmed_R1.fastq.gz --right $work_dir/Heart_trimmed_R2.fastq.gz -SS_lib_type RF --CPU 24 --full_cleanup --normalize_reads --min_kmer_cov 2 --output $work_dir/trinity_out_dir >> trinity.log
-mv $work_dir/trinity_out_dir.Trinity.fasta /scratch/glor_lab/rich/distichus_genome_RNAseq/Heart/ #Moves files from node doing analyses to scratch drive.
-rm -rf $work_dir
-
+bowtie2-build /scratch/a499a400/anolis/dovetail/scrubbed_genome.fasta Dovetail_bowtie_DB.fasta
+tophat -r 0 Dovetail_bowtie_DB.fasta /scratch/glor_lab/rich/distichus_genome_RNAseq/All_Tissues/decontam_RNA_1.fastq.gz /scratch/glor_lab/rich/distichus_genome_RNAseq/All_Tissues/decontam_RNA_2.fastq.gz
 ```
-Step 3b: Reference-based Assembly via TopHat
+Once we have the desired BAM file from Tophat, we can use Cufflinks to generate transcripts as follows:
+```
+#PBS -N cufflinks_all
+#PBS -q default -l nodes=1:ppn=24:avx,mem=50000m,walltime=148:00:00
+#PBS -M glor@ku.edu
+#PBS -m abe
+#PBS -d /scratch/glor_lab/rich/distichus_genome/Cufflinks
+#PBS -j oe
+#PBS -o cufflinks_all_error
+
+cufflinks /scratch/glor_lab/rich/distichus_genome/Cufflinks/tophat_out/accepted_hits.bam
+```
+Step 3b: Reference Transcriptome-based Assembly via BWA
 -----
 Here we will use BWA to assemble our transcriptome with reference to the previously published and curated transriptome for *Anolis carolinensis*. 
 ```
